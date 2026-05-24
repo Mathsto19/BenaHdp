@@ -1,0 +1,11 @@
+BenaHdp - Aplicativo Windows
+
+Execute BenaHdp.exe para abrir o programa.
+
+Se o executavel ainda nao tiver sido gerado, use o codigo fonte:
+
+1. Abra o terminal em ..\Código Fonte
+2. Rode: python -m pip install -r requirements.txt
+3. Rode: python Benahdp.py
+
+Manual completo: README.md

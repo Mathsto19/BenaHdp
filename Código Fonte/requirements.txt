@@ -1,0 +1,4 @@
+PyQt6==6.8.1
+opencv-contrib-python==4.10.0.84
+numpy==1.26.4
+networkx==3.4.2
