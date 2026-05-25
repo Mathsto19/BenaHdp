@@ -27,6 +27,16 @@ def cv2_to_qpixmap(cv_img):
     qimg = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
     return QPixmap.fromImage(qimg)
 
+def ler_imagem_cv2(caminho, flags=cv2.IMREAD_UNCHANGED):
+    """Le imagem com suporte a caminhos Unicode no Windows."""
+    try:
+        dados = np.fromfile(caminho, dtype=np.uint8)
+        if dados.size == 0:
+            return None
+        return cv2.imdecode(dados, flags)
+    except (OSError, ValueError):
+        return None
+
 def inverter_cor(rgb_tuple):
     """Retorna o inverso de uma cor RGB (ex: (0, 255, 0) vira (255, 0, 255))"""
     return tuple(255 - c for c in rgb_tuple)
@@ -1098,7 +1108,7 @@ class Layout(QWidget):
 
         self.zoom_factor_global = 0.40 * min(self.scale_x, self.scale_y)
 
-        imagem_cv = cv2.imread(arquivo_imagem, cv2.IMREAD_UNCHANGED)
+        imagem_cv = ler_imagem_cv2(arquivo_imagem)
 
         if imagem_cv is None:
             print("Erro ao carregar a imagem base.")
@@ -1208,7 +1218,7 @@ class Layout(QWidget):
 
         self.zoom_factor_global = 0.40 * min(self.scale_x, self.scale_y)
 
-        imagem_cv = cv2.imread(arquivo_imagem, cv2.IMREAD_UNCHANGED)
+        imagem_cv = ler_imagem_cv2(arquivo_imagem)
 
         if imagem_cv is None:
             print("Erro ao carregar a imagem sobreposta.")
@@ -3155,7 +3165,7 @@ class Layout(QWidget):
         self.arquivo_base = arquivo_imagem
         self.zoom_factor = 0.40 * min(self.scale_x, self.scale_y)
 
-        imagem_cv = cv2.imread(arquivo_imagem, cv2.IMREAD_UNCHANGED)
+        imagem_cv = ler_imagem_cv2(arquivo_imagem)
 
         if imagem_cv is None:
             QMessageBox.warning(self, "Erro", "Erro ao carregar a imagem base.")
@@ -3210,7 +3220,7 @@ class Layout(QWidget):
         self.arquivo_sobreposta = arquivo_imagem
         self.zoom_factor = 0.40 * min(self.scale_x, self.scale_y)
 
-        imagem_cv = cv2.imread(arquivo_imagem, cv2.IMREAD_UNCHANGED)
+        imagem_cv = ler_imagem_cv2(arquivo_imagem)
 
         if imagem_cv is None:
             QMessageBox.warning(self, "Erro", "Erro ao carregar a imagem sobreposta.")
