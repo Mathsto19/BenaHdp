@@ -104,7 +104,6 @@ def process_minutiae_trabalho(image, cor=(0, 255, 0), raio=8, pontos_predefinido
     raio: raio do círculo desenhado em cada minúcia
     pontos_predefinidos: lista opcional de minúcias já detectadas (x, y, score)
     """
-    directions = []
     if image.shape[2] == 4:
         alpha = image[:, :, 3]
         binary = np.zeros_like(alpha)
@@ -113,11 +112,11 @@ def process_minutiae_trabalho(image, cor=(0, 255, 0), raio=8, pontos_predefinido
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, binary = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
 
+    skeleton = cv2.ximgproc.thinning(binary)
+
     if pontos_predefinidos is not None:
         filtered = pontos_predefinidos
     else:
-        skeleton = cv2.ximgproc.thinning(binary)
-
         y_coords, x_coords = np.where(skeleton == 255)
         minutiae = []
         margin = 20
@@ -151,8 +150,11 @@ def process_minutiae_trabalho(image, cor=(0, 255, 0), raio=8, pontos_predefinido
                     filtered.append(m)
             if len(filtered) == quantidade:
                 break
-            
-            directions.append(compute_minutia_direction(skeleton, x, y))
+
+    directions = [
+        compute_minutia_direction(skeleton, int(x), int(y))
+        for x, y, _ in filtered
+    ]
 
     resultado = image.copy()
     for x, y, _ in filtered:
@@ -561,6 +563,8 @@ class Layout(QWidget):
         self.pontos_delta_sobreposta_detectados = []
         self.pontos_core_sobreposta_detectados = []
         self.pontos_minucia_manual = []
+        self.direcoes_minucias_base = {}
+        self.direcoes_minucias_sobreposta = {}
         self.ponto_editando = None
 
         self.grafo_base = []
@@ -1686,15 +1690,34 @@ class Layout(QWidget):
                     painter.drawText(int(x) + 10, int(y) + 10, str(numero_puro))
                 
                 if self.mostrar_direcao_minucias:
+                    dx, dy = (0, 0)
 
-                    if idx in self.direcoes_minucias_sobreposta:
-                        dx, dy = self.direcoes_minucias_sobreposta[idx]
+                    if idx < 1000:
+                        pontos_sobreposta = getattr(self, 'pontos_sobreposta', [])
+                        direcoes_sobreposta = getattr(self, 'direcoes_minucias_sobreposta', {})
+                        if pontos_sobreposta and direcoes_sobreposta:
+                            indices_validos = [
+                                i for i in direcoes_sobreposta.keys()
+                                if 0 < i <= len(pontos_sobreposta)
+                            ]
+                        else:
+                            indices_validos = []
+
+                        if indices_validos:
+                            nearest_idx = min(
+                                indices_validos,
+                                key=lambda i: math.hypot(
+                                    pos[0] - pontos_sobreposta[i - 1][0],
+                                    pos[1] - pontos_sobreposta[i - 1][1]
+                                )
+                            )
+                            dx, dy = direcoes_sobreposta.get(nearest_idx, (0, 0))
 
                     elif idx >= 1000:
                         offset_base = len(self.minutiae_points)
                         idx_manual = idx - 1000 - offset_base
 
-                        if 0 <= idx_manual < len(self.pontos_minucia_manual):
+                        if 0 <= idx_manual < len(self.pontos_minucia_manual) and self.minutiae_points:
                             ponto_manual = self.pontos_minucia_manual[idx_manual]
                             nearest_idx = min(
                                 self.minutiae_points.keys(),
@@ -1708,18 +1731,21 @@ class Layout(QWidget):
                         elif 0 <= idx_manual < len(self.correspondencias):
                             ponto_corr = self.correspondencias.get(idx, None)
                             if ponto_corr:
-                                if (
-                                    getattr(self, 'pontos_sobreposta', [])
-                                    and hasattr(self, 'direcoes_minucias_sobreposta')
-                                ):
+                                pontos_sobreposta = getattr(self, 'pontos_sobreposta', [])
+                                direcoes_sobreposta = getattr(self, 'direcoes_minucias_sobreposta', {})
+                                indices_validos = [
+                                    i for i in direcoes_sobreposta.keys()
+                                    if 0 < i <= len(pontos_sobreposta)
+                                ]
+                                if pontos_sobreposta and indices_validos:
                                     nearest_idx = min(
-                                        self.direcoes_minucias_sobreposta.keys(),
+                                        indices_validos,
                                         key=lambda i: math.hypot(
-                                            ponto_corr[0] - self.pontos_sobreposta[i - 1][0],
-                                            ponto_corr[1] - self.pontos_sobreposta[i - 1][1]
+                                            ponto_corr[0] - pontos_sobreposta[i - 1][0],
+                                            ponto_corr[1] - pontos_sobreposta[i - 1][1]
                                         )
                                     )
-                                    dx, dy = self.direcoes_minucias_sobreposta.get(nearest_idx, (0, 0))
+                                    dx, dy = direcoes_sobreposta.get(nearest_idx, (0, 0))
                                 else:
                                     dx, dy = (0, 0)
                             else:
@@ -2318,8 +2344,8 @@ class Layout(QWidget):
             },
             "pontos": {
                 "minutiae_points": getattr(self, "minutiae_points", {}),
-                "pontos_sobreposta": [],
-                "minucias_detectadas_sobreposta": [],
+                "pontos_sobreposta": getattr(self, "pontos_sobreposta", []),
+                "minucias_detectadas_sobreposta": getattr(self, "minucias_detectadas_sobreposta", []),
                 "pontos_minucia_manual": getattr(self, "pontos_minucia_manual", []),
                 "pontos_delta": getattr(self, "pontos_delta", []),
                 "pontos_core": getattr(self, "pontos_core", []),
@@ -2494,8 +2520,8 @@ class Layout(QWidget):
 
             pontos = dados.get("pontos", {})
             self.minutiae_points = self.restaurar_dict_pontos(pontos.get("minutiae_points", {}))
-            self.pontos_sobreposta = []
-            self.minucias_detectadas_sobreposta = []
+            self.pontos_sobreposta = self.restaurar_lista_pontos(pontos.get("pontos_sobreposta", []), tamanho=3)
+            self.minucias_detectadas_sobreposta = self.restaurar_lista_pontos(pontos.get("minucias_detectadas_sobreposta", []))
             self.pontos_minucia_manual = self.restaurar_lista_pontos(pontos.get("pontos_minucia_manual", []))
             self.pontos_delta = self.restaurar_lista_pontos(pontos.get("pontos_delta", []))
             self.pontos_core = self.restaurar_lista_pontos(pontos.get("pontos_core", []))
@@ -2611,6 +2637,66 @@ class Layout(QWidget):
             with open(log_path, "w", encoding="utf-8") as f:
                 json.dump(self.montar_dados_log(), f, indent=2, ensure_ascii=False)
 
+            def ponto_ja_incluido(pontos, x, y, limite=1.0):
+                return any(
+                    math.hypot(float(x) - float(px), float(y) - float(py)) < limite
+                    for px, py, *_ in pontos
+                )
+
+            def direcao_mais_proxima(x, y, pontos_referencia, direcoes):
+                if not pontos_referencia or not direcoes:
+                    return None
+
+                melhor_idx = None
+                menor_distancia = float("inf")
+                for idx_ref, ponto_ref in pontos_referencia.items():
+                    if idx_ref not in direcoes or len(ponto_ref) < 2:
+                        continue
+                    px, py = ponto_ref[0], ponto_ref[1]
+                    distancia = math.hypot(float(x) - float(px), float(y) - float(py))
+                    if distancia < menor_distancia:
+                        menor_distancia = distancia
+                        melhor_idx = idx_ref
+
+                return direcoes.get(melhor_idx) if melhor_idx is not None else None
+
+            def normalizar_direcao(direcao):
+                if direcao is None or len(direcao) < 2:
+                    return None
+                dx, dy = float(direcao[0]), float(direcao[1])
+                if not math.isfinite(dx) or not math.isfinite(dy):
+                    return None
+                return dx, dy
+
+            def direcao_base_para_ponto(x, y, tipo, idx):
+                if tipo not in ["minucia_auto", "minucia_manual"]:
+                    return None
+
+                direcoes = getattr(self, 'direcoes_minucias_base', {})
+                direcao = direcoes.get(idx)
+                if direcao is None:
+                    direcao = direcao_mais_proxima(
+                        x,
+                        y,
+                        getattr(self, 'minutiae_points', {}),
+                        direcoes,
+                    )
+                return normalizar_direcao(direcao) or (0.0, -1.0)
+
+            def direcao_sobreposta_para_ponto(x, y, tipo, idx):
+                if tipo not in ["minucia", "minucia_auto", "minucia_manual"]:
+                    return None
+
+                direcoes = getattr(self, 'direcoes_minucias_sobreposta', {})
+                pontos_auto = {
+                    auto_idx: ponto
+                    for auto_idx, ponto in enumerate(getattr(self, 'pontos_sobreposta', []), start=1)
+                }
+                direcao = direcoes.get(idx) if tipo == "minucia_auto" else None
+                if direcao is None:
+                    direcao = direcao_mais_proxima(x, y, pontos_auto, direcoes)
+                return normalizar_direcao(direcao) or (0.0, -1.0)
+
             def coletar_pontos_base():
                 pontos = []
                 if hasattr(self, 'minutiae_points'):
@@ -2636,19 +2722,37 @@ class Layout(QWidget):
 
             def coletar_pontos_sobreposta():
                 pontos = []
-                if hasattr(self, 'correspondencias'):
-                    for idx, (x, y) in self.correspondencias.items():
-                        if idx < 1000:
-                            tipo = "minucia"
-                        elif idx < 2000:
-                            tipo = "delta"
-                        else:
-                            tipo = "core"
-                        pontos.append((int(x), int(y), tipo, 1.0, idx))
+
+                for idx, (x, y, score) in enumerate(getattr(self, 'pontos_sobreposta', []), start=1):
+                    pontos.append((int(x), int(y), "minucia_auto", score, idx))
+
+                proximo_idx_minucia = len(getattr(self, 'pontos_sobreposta', [])) + 1
+                for idx_base, (x, y) in getattr(self, 'correspondencias', {}).items():
+                    if idx_base < 1000:
+                        if ponto_ja_incluido(pontos, x, y):
+                            continue
+                        pontos.append((int(x), int(y), "minucia_manual", 1.0, proximo_idx_minucia))
+                        proximo_idx_minucia += 1
+                    elif idx_base < 2000:
+                        pontos.append((int(x), int(y), "delta", 1.0, idx_base))
+                    else:
+                        pontos.append((int(x), int(y), "core", 1.0, idx_base))
                 return pontos
 
             pontos_base = coletar_pontos_base()
             pontos_sobreposta = coletar_pontos_sobreposta()
+            direcoes_base_salvar = {}
+            direcoes_sobreposta_salvar = {}
+
+            for x, y, tipo, score, idx in pontos_base:
+                direcao = direcao_base_para_ponto(x, y, tipo, idx)
+                if direcao is not None:
+                    direcoes_base_salvar[idx] = direcao
+
+            for x, y, tipo, score, idx in pontos_sobreposta:
+                direcao = direcao_sobreposta_para_ponto(x, y, tipo, idx)
+                if direcao is not None:
+                    direcoes_sobreposta_salvar[idx] = direcao
 
             min_base_path = os.path.join(temp_dir, "minucias_base.txt")
             with open(min_base_path, "w") as f:
@@ -2660,7 +2764,7 @@ class Layout(QWidget):
             min_sobreposta_path = os.path.join(temp_dir, "minucias_sobreposta.txt")
             with open(min_sobreposta_path, "w") as f:
                 f.write("# Mapa de Minúcias da Sobreposta\n")
-                f.write("# Formato: x, y, tipo, id_correspondente\n")
+                f.write("# Formato: x, y, tipo, id\n")
                 for x, y, tipo, score, idx in pontos_sobreposta:
                     f.write(f"{x}, {y}, {tipo}, {idx}\n")
 
@@ -2668,17 +2772,15 @@ class Layout(QWidget):
             with open(dir_base_path, "w") as f:
                 f.write("# Direções das Minúcias da Base\n")
                 f.write("# Formato: id, dx, dy\n")
-                if hasattr(self, 'direcoes_minucias_base'):
-                    for idx, (dx, dy) in self.direcoes_minucias_base.items():
-                        f.write(f"{idx}, {dx:.4f}, {dy:.4f}\n")
+                for idx, (dx, dy) in sorted(direcoes_base_salvar.items()):
+                    f.write(f"{idx}, {dx:.4f}, {dy:.4f}\n")
 
             dir_sobreposta_path = os.path.join(temp_dir, "direcoes_sobreposta.txt")
             with open(dir_sobreposta_path, "w") as f:
                 f.write("# Direções das Minúcias da Sobreposta\n")
                 f.write("# Formato: id, dx, dy\n")
-                if hasattr(self, 'direcoes_minucias_sobreposta'):
-                    for idx, (dx, dy) in self.direcoes_minucias_sobreposta.items():
-                        f.write(f"{idx}, {dx:.4f}, {dy:.4f}\n")
+                for idx, (dx, dy) in sorted(direcoes_sobreposta_salvar.items()):
+                    f.write(f"{idx}, {dx:.4f}, {dy:.4f}\n")
 
             img_min_base = QPixmap(self.base_pixmap.size())
             img_min_base.fill(Qt.GlobalColor.transparent)
@@ -2706,7 +2808,7 @@ class Layout(QWidget):
             painter = QPainter(img_min_sobreposta)
             
             for x, y, tipo, score, idx in pontos_sobreposta:
-                if tipo == "minucia":
+                if tipo in ["minucia", "minucia_auto", "minucia_manual"]:
                     r, g, b = self.cor_minucias
                     cor = QColor(r, g, b)
                 elif tipo == "delta":
@@ -2722,7 +2824,7 @@ class Layout(QWidget):
             painter.end()
             img_min_sobreposta.save(os.path.join(temp_dir, "imagem_minucias_sobreposta.png"), "PNG")
 
-            if hasattr(self, 'mostrar_direcao_minucias') and self.mostrar_direcao_minucias and hasattr(self, 'direcoes_minucias_base'):
+            if hasattr(self, 'mostrar_direcao_minucias') and self.mostrar_direcao_minucias and direcoes_base_salvar:
                 img_dir_base = QPixmap(self.base_pixmap.size())
                 img_dir_base.fill(Qt.GlobalColor.transparent)
                 painter = QPainter(img_dir_base)
@@ -2730,8 +2832,8 @@ class Layout(QWidget):
                 painter.setPen(pen)
                 
                 for x, y, tipo, score, idx in pontos_base:
-                    if tipo in ["minucia_auto", "minucia_manual"] and idx in self.direcoes_minucias_base:
-                        dx, dy = self.direcoes_minucias_base[idx]
+                    if tipo in ["minucia_auto", "minucia_manual"] and idx in direcoes_base_salvar:
+                        dx, dy = direcoes_base_salvar[idx]
                         end_x = int(x + dx * self.tamanho_direcao_altura)
                         end_y = int(y + dy * self.tamanho_direcao_altura)
                         painter.drawLine(int(x), int(y), end_x, end_y)
@@ -2739,7 +2841,7 @@ class Layout(QWidget):
                 painter.end()
                 img_dir_base.save(os.path.join(temp_dir, "imagem_direcoes_base.png"), "PNG")
 
-            if hasattr(self, 'mostrar_direcao_minucias') and self.mostrar_direcao_minucias and hasattr(self, 'direcoes_minucias_sobreposta'):
+            if hasattr(self, 'mostrar_direcao_minucias') and self.mostrar_direcao_minucias and direcoes_sobreposta_salvar:
                 img_dir_sobreposta = QPixmap(self.sobreposta_pixmap.size())
                 img_dir_sobreposta.fill(Qt.GlobalColor.transparent)
                 painter = QPainter(img_dir_sobreposta)
@@ -2747,8 +2849,8 @@ class Layout(QWidget):
                 painter.setPen(pen)
                 
                 for x, y, tipo, score, idx in pontos_sobreposta:
-                    if hasattr(self, 'direcoes_minucias_sobreposta') and idx in self.direcoes_minucias_sobreposta:
-                        dx, dy = self.direcoes_minucias_sobreposta[idx]
+                    if tipo in ["minucia", "minucia_auto", "minucia_manual"] and idx in direcoes_sobreposta_salvar:
+                        dx, dy = direcoes_sobreposta_salvar[idx]
                         end_x = int(x + dx * self.tamanho_direcao_altura)
                         end_y = int(y + dy * self.tamanho_direcao_altura)
                         painter.drawLine(int(x), int(y), end_x, end_y)
@@ -2852,7 +2954,7 @@ class Layout(QWidget):
                                     int(self.raio_minucias * 2), int(self.raio_minucias * 2))
                 
                 for x, y, tipo, score, idx in pontos_sobreposta:
-                    if tipo == "minucia":
+                    if tipo in ["minucia", "minucia_auto", "minucia_manual"]:
                         r, g, b = self.cor_minucias
                         cor = QColor(r, g, b)
                     elif tipo == "delta":
@@ -3289,6 +3391,7 @@ class Layout(QWidget):
         self.minucias_scaled = None
         self.minutiae_points = {}
         self.pontos_minucia_manual = []
+        self.direcoes_minucias_base = {}
         self.pontos_delta = []
         self.pontos_core = []
         self.grafo_base = []
@@ -3303,6 +3406,7 @@ class Layout(QWidget):
         """Remove todas as minúcias e correspondências da imagem sobreposta."""
         self.pontos_sobreposta = []
         self.minucias_detectadas_sobreposta = []
+        self.direcoes_minucias_sobreposta = {}
         self.pontos_delta_sobreposta_detectados = []
         self.pontos_core_sobreposta_detectados = []
         self.pontos_correspondentes_sobreposta = set()
